@@ -1,0 +1,254 @@
+---
+title: "Genes best correlating with the selected gene"
+output:
+  html_document:
+    toc: true
+    # toc_float: true
+    theme: united
+    # theme: cerulean
+    # number_sections: true
+date: "`r Sys.Date()`"
+author: "Mikhail Dozmorov"
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+# Set up the environment
+library(knitr)
+opts_chunk$set(cache.path='cache/', fig.path='img/', cache=F, tidy=T, fig.keep='high', echo=F, dpi=100, warnings=F, message=F, comment=NA, warning=F, results='as.is', fig.width = 10, fig.height = 6) #out.width=700, 
+library(pander)
+panderOptions('table.split.table', Inf)
+set.seed(1)
+library(dplyr)
+options(stringsAsFactors = FALSE)
+```
+
+```{r libraries}
+library(yarn)
+library(dplyr)
+library(enrichR)
+```
+
+```{r settings}
+data_dir <- "/Users/mdozmorov/Documents/Data/GenomeRunner/GTEx/" # Mac
+data_dir <- "F:/Data/GenomeRunner/TCGAsurvival/data" # Windows
+data_dir <- "data/" # Windows temporary
+
+fileNameIn_gtex <- paste0(data_dir, "gtex.rds")
+tissue <- "Brain" #  "Adipose Tissue", "Adrenal Gland", "Blood Vessel", "Bladder", "Brain", "Breast", "Blood", "Skin", "Cervix Uteri", "Colon", "Esophagus", "Fallopian Tube", "Heart", "Kidney", "Liver", "Lung", "Salivary Gland", "Muscle", "Nerve", "Ovary", "Pancreas", "Pituitary", "Prostate", "Small Intestine", "Spleen", "Stomach", "Testis", "Thyroid", "Uterus", "Vagina"
+fileNameOut_gtex <- paste0(sub(".rds", "", fileNameIn_gtex), "_", tissue, ".rda") # Where to save subsetted and normalized object
+proportion_cutoff <- 0.33 # maximum proportion of missing values, if more - exclude gene
+corr_type <- "pearson" # Type of correlations, may be "spearman"
+corr_cutoff <- 0.2 # Cutoff for selecting best correlated genes
+fdr.cutoff <- 0.1 # Cutoff for functional enrichment analysis
+```
+
+```{r}
+library(annotables)
+# Remove non-canonical chromosome names
+grch38 <- grch38[ !(grepl("_", grch38$chr) | grepl("GL", grch38$chr)), ]
+grch38 <- grch38[, c("ensgene", "symbol", "description")]
+grch38 <- grch38[ !duplicated(grch38), ]
+```
+
+```{r load}
+if (!file.exists(fileNameOut_gtex)) { # If not preprocessed file
+  # load the original file
+  obj <- readRDS(file = fileNameIn_gtex)
+  # subset
+  ind_tissue <- which(pData(obj)$SMTS == tissue)
+  obj <- obj[, ind_tissue ]
+  # filter
+  ff <- genefilter::pOverA(p = proportion_cutoff, A = 0, na.rm = TRUE) # Should be more than 90% of non-zero values
+  obj <- obj[apply(exprs(obj), 1, ff), ] 
+  # normalize log2-transformed data
+  exprs <- limma::normalizeQuantiles(log2(exprs(obj) + 1))
+  exprs(obj) <- exprs
+  # Save
+  save(obj, file = fileNameOut_gtex) # Select cancers
+} else {
+  load(file = fileNameOut_gtex)
+}
+```
+```{r select_genes}
+# Select by gene name
+# selected_genes <- c("ACTB")
+# sum(fData(obj)$hgnc_symbol %in% selected_genes)
+# Or, select by Ensembl ID
+selected_genes <- c("ENSG00000250658")
+sum(fData(obj)$ensembl_gene_id %in% selected_genes)
+fData(obj)[ fData(obj)$ensembl_gene_id %in% selected_genes, ]
+# Goal - to get index of the selected gene
+ind_gene <- which(fData(obj)$ensembl_gene_id %in% selected_genes)
+```
+
+```{r correlations}
+# File name to save correlation object
+fileNameOut_corr <- paste0("data/corr_", selected_genes, ".rda")
+
+if (!file.exists(fileNameOut_corr)) { # If correlations are not precomputed
+  max_corrs <- nrow(obj) # How many rows to process
+  all_corrs <- vector(mode = "numeric", length = max_corrs)
+  all_pvals <- vector(mode = "numeric", length = max_corrs)
+  target_gene <- as.numeric(exprs(obj)[ ind_gene, ]) # The target gene to run correlation on
+  exprs <- exprs(obj) # Extract expression matrix once
+  for (i in 1:max_corrs) {
+    cors         <- Hmisc::rcorr(target_gene, as.numeric(exprs[ i, ]), type = corr_type)
+    all_corrs[i] <- cors[[1]][1, 2]
+    all_pvals[i] <- cors[[3]][1, 2]
+  }
+  correlations <- data.frame(fData(obj)[1:max_corrs, ], corr = all_corrs, pval = all_pvals) # Assemble correlations
+  correlations <- left_join(correlations, grch38, by = c("ensembl_gene_id" = "ensgene"))
+  save(correlations, file = fileNameOut_corr)
+} else {
+  load(file = fileNameOut_corr)
+}
+```
+
+# Correlation analysis
+
+## Positively correlated genes 
+
+
+Genes positively correlated with the selected gene `r selected_genes` across all `r tissue` tissues. Correlation method: `r corr_type`, correlation coefficient cutoff: >`r corr_cutoff`. Legend:
+
+- `symbol`, `description` - gene symbols/description
+- `cor`, `pval` - Pearson correlation coefficient, and p-value of correlation significance
+
+```{r}
+correlations_pos <- correlations[ correlations$corr > corr_cutoff, ]
+correlations_pos$corr <- signif(correlations_pos$corr)
+correlations_pos$pval <- signif(correlations_pos$pval)
+DT::datatable(correlations_pos[ order(correlations_pos$corr, decreasing = TRUE), ])
+up.genes <- unique(correlations_pos$hgnc_symbol[ !(is.na(correlations_pos$hgnc_symbol) | correlations_pos$hgnc_symbol == "") ])
+```
+
+We have `r nrow(correlations_pos)` genes positively correlated with `r selected_genes`.
+
+## Negatively correlated genes
+
+```{r}
+correlations_neg <- correlations[ correlations$corr < -corr_cutoff, ]
+correlations_neg$corr <- signif(correlations_neg$corr)
+correlations_neg$pval <- signif(correlations_neg$pval)
+DT::datatable(correlations_neg[ order(correlations_neg$corr, decreasing = FALSE), ])
+dn.genes <- unique(correlations_neg$hgnc_symbol[ !(is.na(correlations_neg$hgnc_symbol) | correlations_neg$hgnc_symbol == "") ])
+```
+
+We have `r nrow(correlations_neg)` genes negatively correlated with `r selected_genes`.
+
+
+# Functional enrichment analysis
+
+- Each table has enrichment results separately for up/downregulated genes. The "direction" column indicate which pathways are enriched in "UP"- or "DN"-regulated genes.
+
+- Use the "Search" box for each table, to filter the results for "UP" or "DN" only. Search is global within the table, case insensitive.
+
+- FDR cutoff - `r fdr.cutoff`.
+
+## GO_Biological_Process_2015
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("GO_Biological_Process_2015"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## GO_Molecular_Function_2015
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("GO_Molecular_Function_2015"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## KEGG
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("KEGG_2016"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## WikiPathways
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("WikiPathways_2016"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## BioCarta
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("Biocarta_2016"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## Reactome
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("Reactome_2016"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## Panther
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("Panther_2016"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## TRANSFAC_and_JASPAR_PWMs
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("TRANSFAC_and_JASPAR_PWMs"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## Genome_Browser_PWMs
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("Genome_Browser_PWMs"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## ChEA_2016
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("ChEA_2016"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## ENCODE_TF_ChIP-seq_2015
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("ENCODE_TF_ChIP-seq_2015"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
+
+## ENCODE_Histone_Modifications_2015
+
+```{r}
+res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = c("ENCODE_Histone_Modifications_2015"), fdr.cutoff = fdr.cutoff)
+res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
+res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+DT::datatable(res.kegg)
+```
