@@ -26,11 +26,12 @@ options(stringsAsFactors = FALSE)
 library(yarn)
 library(dplyr)
 library(enrichR)
+library(pathview)
 ```
 
 ```{r settings}
 data_dir <- "/Users/mdozmorov/Documents/Data/GenomeRunner/GTEx/" # Mac
-data_dir <- "F:/Data/GenomeRunner/GTEx/" # Windows
+# data_dir <- "F:/Data/GenomeRunner/GTEx/" # Windows
 # data_dir <- "data/" # Windows temporary
 
 fileNameIn_gtex <- paste0(data_dir, "gtex.rds")
@@ -41,6 +42,8 @@ corr_type <- "pearson" # Type of correlations, may be "spearman"
 corr_cutoff <- 0.2 # Cutoff for selecting best correlated genes
 fdr.cutoff <- 0.1 # Cutoff for functional enrichment analysis
 extended_analysis <- FALSE # Run extended (=use all EnrichR databases) analysis?
+lower_expr_percentile <- 0.1 # Lower expression percentile for the target gene, below which a sample is excluded
+top_pathways_to_plot  <- 10 # How many top KEGG pathways to plot?
 ```
 
 ```{r}
@@ -65,7 +68,7 @@ save_enrichr <- function(up.genes = up.genes, dn.genes = dn.genes, databases = "
   print(paste("Running", databases, "analysis", sep = " "))
   res.kegg <- enrichFullGeneList(up.genes, dn.genes, databases = databases, fdr.cutoff = fdr.cutoff)
   res.kegg$pval <- formatC(res.kegg$pval, digits = 3, format = "e")
-  res.kegg$qval <- formatC(res.kegg$pval, digits = 3, format = "e")
+  res.kegg$qval <- formatC(res.kegg$qval, digits = 3, format = "e")
   if (nchar(databases) > 30) databases <- paste0(substr(databases, 1, 20), "_", substr(databases, nchar(databases) - 8, nchar(databases))) # If a database is longer that 30 characters, keep first 20 and last 10 characters
   save_res(res.kegg, fileNameOut, wb = wb, sheetName = databases)
   # Pause for a few seconds
@@ -101,8 +104,8 @@ if (!file.exists(fileNameOut_gtex)) { # If not preprocessed file
 # sum(fData(obj)$hgnc_symbol %in% selected_genes)
 # Or, select by Ensembl ID
 selected_genes <- c("ENSG00000250658") # LOC339975
-selected_genes <- c("ENSG00000204460") # LOC151121
-selected_genes <- c("ENSG00000246090") # LOC100507053
+# selected_genes <- c("ENSG00000204460") # LOC151121
+# selected_genes <- c("ENSG00000246090") # LOC100507053
 sum(fData(obj)$ensembl_gene_id %in% selected_genes)
 fData(obj)[ fData(obj)$ensembl_gene_id %in% selected_genes, ]
 # Goal - to get index of the selected gene
@@ -116,6 +119,10 @@ unlink(fileNameOut)
 wb <- openxlsx::createWorkbook(fileNameOut) # openxlsx::loadWorkbook(fileName)
 ```
 
+# Correlation analysis
+
+We have `r ncol(exprs(obj))` samples to run correlation on
+
 ```{r correlations}
 # File name to save correlation object
 fileNameOut_corr <- paste0("data/corr_", selected_genes, ".rda")
@@ -125,7 +132,9 @@ if (!file.exists(fileNameOut_corr)) { # If correlations are not precomputed
   all_corrs <- vector(mode = "numeric", length = max_corrs)
   all_pvals <- vector(mode = "numeric", length = max_corrs)
   target_gene <- as.numeric(exprs(obj)[ ind_gene, ]) # The target gene to run correlation on
-  exprs <- exprs(obj) # Extract expression matrix once
+  idx <- which(target_gene > quantile(target_gene, probs = lower_expr_percentile)) # Which are non-zero?
+  target_gene <- target_gene[ idx ]
+  exprs <- exprs(obj)[, idx] # Extract expression matrix once, subsetted
   for (i in 1:max_corrs) {
     cors         <- Hmisc::rcorr(target_gene, as.numeric(exprs[ i, ]), type = corr_type)
     all_corrs[i] <- cors[[1]][1, 2]
@@ -140,7 +149,7 @@ if (!file.exists(fileNameOut_corr)) { # If correlations are not precomputed
 save_res(correlations[ order(correlations$corr, decreasing = TRUE), ], fileNameOut, wb = wb, sheetName = "Correlations")
 ```
 
-# Correlation analysis
+If we remove samples having expression of the target gene `r selected_genes` below `r lower_expr_percentile` percentile, we are left with `r ncol(exprs)` samples
 
 ## Positively correlated genes 
 
@@ -188,186 +197,47 @@ res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "
 DT::datatable(res.kegg)
 ```
 
-## GO_Biological_Process_2015
+```{r eval=FALSE}
+# Save named correlation vector
+# For upregulated
+up.degs.genes <- aggregate(correlations_neg$corr, by = list(gene = correlations_neg$hgnc_symbol), FUN = mean) # Aggregate potential duplicated names
+up.degs.genes <- up.degs.genes[ !(up.degs.genes$gene == "" | is.na(up.degs.genes)), ] # Remove empty gene names
+up.degs.names <- up.degs.genes$gene
+up.degs.genes <- up.degs.genes$x
+names(up.degs.genes) <- up.degs.names
+# and downregulated genes
+dn.degs.genes <- aggregate(correlations_neg$corr, by = list(gene = correlations_neg$hgnc_symbol), FUN = mean) # Aggregate potential duplicated names
+dn.degs.genes <- dn.degs.genes[ !(dn.degs.genes$gene == "" | is.na(dn.degs.genes)), ] # Remove empty gene names
+dn.degs.names <- dn.degs.genes$gene
+dn.degs.genes <- dn.degs.genes$x
+names(dn.degs.genes) <- dn.degs.names
+# Combine into one
+degs.genes <- c(up.degs.genes, dn.degs.genes)
 
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "GO_Biological_Process_2015", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
+# Get pathways
+# For upregulated
+up.res.kegg <- res.kegg$category[ res.kegg$direction == "UP" ]
+if (length(up.res.kegg) > 0) {
+  up.res.kegg <- up.res.kegg[ grepl("sapiens", up.res.kegg) ]
+  up.res.kegg.names <- sapply(up.res.kegg, function(x) { strsplit(x, "_Homo sapiens_hsa")[[1]][1] })
+  up.res.kegg.ids   <- sapply(up.res.kegg, function(x) { strsplit(x, "_hsa")[[1]][2] })
+}
+# and downregulated genes
+dn.res.kegg <- res.kegg$category[ res.kegg$direction == "DN" ]
+if (length(dn.res.kegg) > 0) {
+  dn.res.kegg <- dn.res.kegg[ grepl("sapiens", dn.res.kegg) ]
+  dn.res.kegg.names <- sapply(dn.res.kegg, function(x) { strsplit(x, "_Homo sapiens_hsa")[[1]][1] })
+  dn.res.kegg.ids   <- sapply(dn.res.kegg, function(x) { strsplit(x, "_hsa")[[1]][2] })
+}
 
-## GO_Molecular_Function_2015
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "GO_Molecular_Function_2015", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## GO_Cellular_Component_2015
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "GO_Cellular_Component_2015", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## WikiPathways_2016
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "WikiPathways_2016", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## BioCarta_2016
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "BioCarta_2016", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## Reactome_2016
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "Reactome_2016", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## Panther_2016
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "Panther_2016", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## TRANSFAC_and_JASPAR_PWMs
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "TRANSFAC_and_JASPAR_PWMs", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## Genome_Browser_PWMs
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "Genome_Browser_PWMs", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## ChEA_2016
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "ChEA_2016", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## ENCODE_TF_ChIP-seq_2015
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "ENCODE_TF_ChIP-seq_2015", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## ENCODE_Histone_Modifications_2015
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "ENCODE_Histone_Modifications_2015", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-## Epigenomics_Roadmap_HM_ChIP-seq
-
-```{r}
-res.kegg <- save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = "Epigenomics_Roadmap_HM_ChIP-seq", fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
-DT::datatable(res.kegg)
-```
-
-<!--
-## Extended analyses `r if (extended_analysis) cat("was run") else cat("was not run")`
-
-
-See http://amp.pharm.mssm.edu/Enrichr/#stats for databases description
-
-- Genes_Associated_with_NIH_Grants
-- Cancer_Cell_Line_Encyclopedia
-- Achilles_fitness_decrease
-- Achilles_fitness_increase
-- Aging_Perturbations_from_GEO_down
-- Aging_Perturbations_from_GEO_up
-- Allen_Brain_Atlas_down
-- Allen_Brain_Atlas_up
-- Chromosome_Location
-- CORUM
-- dbGaP
-- Disease_Perturbations_from_GEO_down
-- Disease_Perturbations_from_GEO_up
-- Disease_Signatures_from_GEO_down_2014
-- Disease_Signatures_from_GEO_up_2014
-- Drug_Perturbations_from_GEO_2014
-- Drug_Perturbations_from_GEO_down
-- Drug_Perturbations_from_GEO_up
-- DrugMatrix
-- ESCAPE
-- GeneSigDB
-- Genome_Browser_PWMs
-- GTEx_Tissue_Sample_Gene_Expression_Profiles_down
-- GTEx_Tissue_Sample_Gene_Expression_Profiles_up
-- HMDB_Metabolites
-- HomoloGene
-- Human_Gene_Atlas
-- Human_Phenotype_Ontology
-- HumanCyc_2015
-- Humancyc_2016
-- KEA_2013
-- KEA_2015
-- Kinase_Perturbations_from_GEO_down
-- Kinase_Perturbations_from_GEO_up
-- Ligand_Perturbations_from_GEO_down
-- Ligand_Perturbations_from_GEO_up
-- LINCS_L1000_Chem_Pert_down
-- LINCS_L1000_Chem_Pert_up
-- LINCS_L1000_Kinase_Perturbations_down
-- LINCS_L1000_Kinase_Perturbations_up
-- LINCS_L1000_Ligand_Perturbations_down
-- LINCS_L1000_Ligand_Perturbations_up
-- MCF7_Perturbations_from_GEO_down
-- MCF7_Perturbations_from_GEO_up
-- MGI_Mammalian_Phenotype_2013
-- MGI_Mammalian_Phenotype_Level_3
-- MGI_Mammalian_Phenotype_Level_4
-- Microbe_Perturbations_from_GEO_down
-- Microbe_Perturbations_from_GEO_up
-- Mouse_Gene_Atlas
-- MSigDB_Computational
-- MSigDB_Oncogenic_Signatures
-- NCI-60_Cancer_Cell_Lines
-- NCI-Nature_2016
-- NURSA_Human_Endogenous_Complexome
-- Old_CMAP_down
-- Old_CMAP_up
-- OMIM_Disease
-- OMIM_Expanded
-- Pfam_InterPro_Domains
-- Phosphatase_Substrates_from_DEPOD
-- PPI_Hub_Proteins
-- SILAC_Phosphoproteomics
-- Single_Gene_Perturbations_from_GEO_down
-- Single_Gene_Perturbations_from_GEO_up
-- TargetScan_microRNA
-- TF-LOF_Expression_from_GEO
-- Tissue_Protein_Expression_from_Human_Proteome_Map
-- Tissue_Protein_Expression_from_ProteomicsDB
-- Transcription_Factor_PPIs
-- Virus_Perturbations_from_GEO_down
-- Virus_Perturbations_from_GEO_up
-- VirusMINT
-
-
-
-```{r}
-remaining_analyses <- c("Genes_Associated_with_NIH_Grants", "Cancer_Cell_Line_Encyclopedia", "Achilles_fitness_decrease", "Achilles_fitness_increase", "Aging_Perturbations_from_GEO_down", "Aging_Perturbations_from_GEO_up", "Allen_Brain_Atlas_down", "Allen_Brain_Atlas_up", "Chromosome_Location", "CORUM", "dbGaP", "Disease_Perturbations_from_GEO_down", "Disease_Perturbations_from_GEO_up", "Disease_Signatures_from_GEO_down_2014", "Disease_Signatures_from_GEO_up_2014", "Drug_Perturbations_from_GEO_2014", "Drug_Perturbations_from_GEO_down", "Drug_Perturbations_from_GEO_up", "DrugMatrix", "ESCAPE", "GeneSigDB", "Genome_Browser_PWMs", "GTEx_Tissue_Sample_Gene_Expression_Profiles_down", "GTEx_Tissue_Sample_Gene_Expression_Profiles_up", "HMDB_Metabolites", "HomoloGene", "Human_Gene_Atlas", "Human_Phenotype_Ontology", "HumanCyc_2015", "Humancyc_2016", "KEA_2013", "KEA_2015", "Kinase_Perturbations_from_GEO_down", "Kinase_Perturbations_from_GEO_up", "Ligand_Perturbations_from_GEO_down", "Ligand_Perturbations_from_GEO_up", "LINCS_L1000_Chem_Pert_down", "LINCS_L1000_Chem_Pert_up", "LINCS_L1000_Kinase_Perturbations_down", "LINCS_L1000_Kinase_Perturbations_up", "LINCS_L1000_Ligand_Perturbations_down", "LINCS_L1000_Ligand_Perturbations_up", "MCF7_Perturbations_from_GEO_down", "MCF7_Perturbations_from_GEO_up", "MGI_Mammalian_Phenotype_2013", "MGI_Mammalian_Phenotype_Level_3", "MGI_Mammalian_Phenotype_Level_4", "Microbe_Perturbations_from_GEO_down", "Microbe_Perturbations_from_GEO_up", "Mouse_Gene_Atlas", "MSigDB_Computational", "MSigDB_Oncogenic_Signatures", "NCI-60_Cancer_Cell_Lines", "NCI-Nature_2016", "NURSA_Human_Endogenous_Complexome", "Old_CMAP_down", "Old_CMAP_up", "OMIM_Disease", "OMIM_Expanded", "Pfam_InterPro_Domains", "Phosphatase_Substrates_from_DEPOD", "PPI_Hub_Proteins", "SILAC_Phosphoproteomics", "Single_Gene_Perturbations_from_GEO_down", "Single_Gene_Perturbations_from_GEO_up", "TargetScan_microRNA", "TF-LOF_Expression_from_GEO", "Tissue_Protein_Expression_from_Human_Proteome_Map", "Tissue_Protein_Expression_from_ProteomicsDB", "Transcription_Factor_PPIs", "Virus_Perturbations_from_GEO_down", "Virus_Perturbations_from_GEO_up", "VirusMINT")
-
-for (i in remaining_analyses) {
-  save_enrichr(up.genes = up.genes, dn.genes = dn.genes, databases = i, fdr.cutoff = fdr.cutoff, fileNameOut = fileNameOut, wb = wb)
+# Get pathways
+for (i in 1:top_pathways_to_plot) {
+  if (!is.na(up.res.kegg.ids[i])) {
+    pathview(gene.data = degs.genes, pathway.id = up.res.kegg.ids[i], species = "hsa", gene.idtype = "SYMBOL", gene.annotpkg = "org.Hs.eg.db", out.suffix = paste0(up.res.kegg.names[i], "_UP"))
+  }
+  if (!is.na(dn.res.kegg.ids[i])) {
+    pathview(gene.data = degs.genes, pathway.id = dn.res.kegg.ids[i], species = "hsa", gene.idtype = "SYMBOL", gene.annotpkg = "org.Hs.eg.db", out.suffix = paste0(dn.res.kegg.names[i], "_DN"))
+  }
 }
 ```
--->
-
 
