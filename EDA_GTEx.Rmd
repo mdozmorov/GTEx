@@ -1,0 +1,54 @@
+---
+title: "Genes best correlating with the selected gene"
+output:
+  html_document:
+    toc: true
+    # toc_float: true
+    theme: united
+    # theme: cerulean
+    # number_sections: true
+date: "`r Sys.Date()`"
+author: "Mikhail Dozmorov"
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+# Set up the environment
+library(knitr)
+opts_chunk$set(cache.path='cache/', fig.path='img/', cache=F, tidy=T, fig.keep='high', echo=F, dpi=100, warnings=F, message=F, comment=NA, warning=F, results='as.is', fig.width = 10, fig.height = 6) #out.width=700, 
+library(pander)
+panderOptions('table.split.table', Inf)
+set.seed(1)
+library(dplyr)
+options(stringsAsFactors = FALSE)
+```
+
+```{r libraries}
+library(yarn)
+library(dplyr)
+```
+
+```{r settings}
+data_dir <- "/Users/mdozmorov/Documents/Data/GenomeRunner/GTEx/"
+fileNameIn <- "gtex.rda"
+```
+
+```{r load}
+obj <- readRDS(file = paste0(data_dir, fileNameIn))
+```
+
+```{r}
+pData(obj) <- data.frame(lapply(pData(obj), as.character), stringsAsFactors = FALSE)
+```
+
+# Tissue types
+
+```{r}
+data.frame(table(pData(obj)$SMTS)) %>% pander
+```
+
+# Tissue subtypes
+
+```{r}
+data.frame(table(pData(obj)$SMTSD)) %>% pander
+```
+
