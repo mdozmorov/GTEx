@@ -1,0 +1,94 @@
+---
+title: "Gene expression across tissue types"
+output:
+  html_document:
+    toc: true
+    # toc_float: true
+    theme: united
+    # theme: cerulean
+    # number_sections: true
+date: "`r Sys.Date()`"
+author: "Mikhail Dozmorov"
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+# Set up the environment
+library(knitr)
+opts_chunk$set(cache.path='cache/', fig.path='img/', cache=F, tidy=T, fig.keep='high', echo=F, dpi=100, warnings=F, message=F, comment=NA, warning=F, results='as.is', fig.width = 10, fig.height = 6) #out.width=700, 
+library(pander)
+panderOptions('table.split.table', Inf)
+set.seed(1)
+library(dplyr)
+options(stringsAsFactors = FALSE)
+```
+
+```{r libraries}
+library(yarn)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+```
+
+```{r settings}
+data_dir <- "/Users/mdozmorov/Documents/Data/GenomeRunner/GTEx/" # Mac
+# data_dir <- "F:/Data/GenomeRunner/GTEx/" # Windows
+# data_dir <- "data/" # Windows temporary
+
+fileNameIn_gtex <- paste0(data_dir, "gtex.rds")
+fileNameIn_gtex_normalized <- paste0(sub(".rds", "", fileNameIn_gtex), "_quantilenorm", ".rda")
+tissue <- c("Adipose Tissue", "Adrenal Gland", "Blood Vessel", "Bladder", "Brain", "Breast", "Blood", "Skin", "Cervix Uteri", "Colon", "Esophagus", "Fallopian Tube", "Heart", "Kidney", "Liver", "Lung", "Salivary Gland", "Muscle", "Nerve", "Ovary", "Pancreas", "Pituitary", "Prostate", "Small Intestine", "Spleen", "Stomach", "Testis", "Thyroid", "Uterus", "Vagina")
+fileNameOut_gtex <- paste0(sub(".rds", "", fileNameIn_gtex), "_", tissue, ".rda") # Where to save subsetted and normalized object
+```
+
+```{r load}
+if (!file.exists(fileNameIn_gtex_normalized)) { # If not preprocessed file
+  # subset
+  ind_tissue <- which(pData(obj)$SMTS == tissue)
+  obj <- obj[, ind_tissue ]
+  # filter
+  # ff <- genefilter::pOverA(p = proportion_cutoff, A = 0, na.rm = TRUE) # Should be more than 90% of non-zero values
+  # obj <- obj[apply(exprs(obj), 1, ff), ] 
+  # normalize log2-transformed data
+  tmp <- log2(exprs(obj) + 1)
+  exprs <- limma::normalizeQuantiles(tmp)
+  exprs(obj) <- exprs
+  # Save
+  save(obj, file = fileNameIn_gtex_normalized) # All tissues
+} else {
+  load(file = fileNameIn_gtex_normalized)
+}
+```
+
+```{r select_genes}
+# Or, select by Ensembl ID
+# selected_genes <- c("ENSG00000250658", "ENSG00000204460", "ENSG00000246090")
+# selected_names <- c("LOC339975", "LOC151121", "LOC100507053")
+# selected_genes <- c("ENSG00000185046")
+# selected_names <- c("ANKS1B")
+selected_genes <- c("ENSG00000157540")
+selected_names <- c("DYRK1A")
+# Sanity chack
+sum(fData(obj)$ensembl_gene_id %in% selected_genes)
+fData(obj)[ fData(obj)$ensembl_gene_id %in% selected_genes, ]
+# Extract expression
+genes_in_obj   <- fData(obj)$ensembl_gene_id[fData(obj)$ensembl_gene_id %in% selected_genes] # Order of genes in the object
+selected_exprs <- exprs(obj)[fData(obj)$ensembl_gene_id %in% selected_genes, , drop = FALSE] # Expression, original order
+selected_fdata <- fData(obj)[fData(obj)$ensembl_gene_id %in% selected_genes, , drop = FALSE] # fData, original order
+# Sanity check of the right order
+selected_fdata[match(selected_genes, genes_in_obj), , drop = FALSE] 
+# Format expression matrix
+selected_exprs <- selected_exprs[match(selected_genes, genes_in_obj), , drop = FALSE] # Reorder selected expression
+selected_exprs <- t(selected_exprs) # Transpose
+colnames(selected_exprs) <- selected_names # Name columns by familiar IDs
+selected_exprs <- data.frame(selected_exprs, tissue_subtype = as.character(pData(obj)$SMTS)) # Append tissue types
+selected_exprs <- selected_exprs %>% melt(measure.vars = selected_names, variable.name = "gene", value.name = "expression") # Convert into long format
+```
+
+```{r visualize}
+ggplot(selected_exprs, aes(x = tissue_subtype, y = expression)) + 
+  geom_boxplot(aes(fill = tissue_subtype)) +
+  facet_grid(gene ~ .) + 
+  coord_flip() +
+  theme(legend.position="none")
+```
+
