@@ -82,6 +82,9 @@ selected_exprs <- t(selected_exprs) # Transpose
 colnames(selected_exprs) <- selected_names # Name columns by familiar IDs
 selected_exprs <- data.frame(selected_exprs, tissue_subtype = as.character(pData(obj)$SMTS)) # Append tissue types
 selected_exprs <- selected_exprs %>% melt(measure.vars = selected_names, variable.name = "gene", value.name = "expression") # Convert into long format
+
+mean_gene <- aggregate(selected_exprs$expression, by = list(Subtype = selected_exprs$tissue_subtype), FUN = mean)
+selected_exprs$tissue_subtype <- factor(selected_exprs$tissue_subtype, levels = mean_gene$Subtype[ order(mean_gene$x, decreasing = FALSE)])
 ```
 
 ```{r visualize}
