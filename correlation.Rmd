@@ -35,7 +35,7 @@ data_dir <- "/Users/mdozmorov/Documents/Data/GenomeRunner/GTEx/" # Mac
 # data_dir <- "data/" # Windows temporary
 
 fileNameIn_gtex <- paste0(data_dir, "gtex.rds")
-tissue <- "Brain" #  "Adipose Tissue", "Adrenal Gland", "Blood Vessel", "Bladder", "Brain", "Breast", "Blood", "Skin", "Cervix Uteri", "Colon", "Esophagus", "Fallopian Tube", "Heart", "Kidney", "Liver", "Lung", "Salivary Gland", "Muscle", "Nerve", "Ovary", "Pancreas", "Pituitary", "Prostate", "Small Intestine", "Spleen", "Stomach", "Testis", "Thyroid", "Uterus", "Vagina"
+tissue <- "Breast" #  "Adipose Tissue", "Adrenal Gland", "Blood Vessel", "Bladder", "Brain", "Breast", "Blood", "Skin", "Cervix Uteri", "Colon", "Esophagus", "Fallopian Tube", "Heart", "Kidney", "Liver", "Lung", "Salivary Gland", "Muscle", "Nerve", "Ovary", "Pancreas", "Pituitary", "Prostate", "Small Intestine", "Spleen", "Stomach", "Testis", "Thyroid", "Uterus", "Vagina"
 fileNameOut_gtex <- paste0(sub(".rds", "", fileNameIn_gtex), "_", tissue, ".rda") # Where to save subsetted and normalized object
 proportion_cutoff <- 0.33 # maximum proportion of missing values, if more - exclude gene
 corr_type <- "pearson" # Type of correlations, may be "spearman"
@@ -85,9 +85,9 @@ if (!file.exists(fileNameOut_gtex)) { # If not preprocessed file
   # subset
   ind_tissue <- which(pData(obj)$SMTS == tissue)
   obj <- obj[, ind_tissue ]
-  # filter
-  ff <- genefilter::pOverA(p = proportion_cutoff, A = 0, na.rm = TRUE) # Should be more than 90% of non-zero values
-  obj <- obj[apply(exprs(obj), 1, ff), ] 
+  # # filter
+  # ff <- genefilter::pOverA(p = proportion_cutoff, A = 0, na.rm = TRUE) # Should be more than 90% of non-zero values
+  # obj <- obj[apply(exprs(obj), 1, ff), ] 
   # normalize log2-transformed data
   exprs <- limma::normalizeQuantiles(log2(exprs(obj) + 1))
   exprs(obj) <- exprs

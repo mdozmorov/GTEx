@@ -65,8 +65,12 @@ if (!file.exists(fileNameIn_gtex_normalized)) { # If not preprocessed file
 # selected_names <- c("LOC339975", "LOC151121", "LOC100507053")
 # selected_genes <- c("ENSG00000185046")
 # selected_names <- c("ANKS1B")
-selected_genes <- c("ENSG00000157540")
-selected_names <- c("DYRK1A")
+# selected_genes <- c("ENSG00000157540")
+# selected_names <- c("DYRK1A")
+# selected_genes <- c("ENSG00000136485")
+# selected_names <- c("DCAF7")
+selected_genes <- c("ENSG00000115884")
+selected_names <- c("SDC1")
 # Sanity chack
 sum(fData(obj)$ensembl_gene_id %in% selected_genes)
 fData(obj)[ fData(obj)$ensembl_gene_id %in% selected_genes, ]
