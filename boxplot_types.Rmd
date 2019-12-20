@@ -1,14 +1,13 @@
 ---
 title: "Gene expression across tissue types"
-output:
-  html_document:
-    toc: true
-    # toc_float: true
-    theme: united
-    # theme: cerulean
-    # number_sections: true
-date: "`r Sys.Date()`"
 author: "Mikhail Dozmorov"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    theme: united
+    toc: yes
 ---
 
 ```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
@@ -69,8 +68,10 @@ if (!file.exists(fileNameIn_gtex_normalized)) { # If not preprocessed file
 # selected_names <- c("DYRK1A")
 # selected_genes <- c("ENSG00000136485")
 # selected_names <- c("DCAF7")
-selected_genes <- c("ENSG00000115884")
-selected_names <- c("SDC1")
+# selected_genes <- c("ENSG00000115884")
+# selected_names <- c("SDC1")
+selected_genes <- c("ENSG00000196591")
+selected_names <- c("HDAC2")
 # Sanity chack
 sum(fData(obj)$ensembl_gene_id %in% selected_genes)
 fData(obj)[ fData(obj)$ensembl_gene_id %in% selected_genes, ]
