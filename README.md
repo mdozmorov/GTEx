@@ -10,5 +10,7 @@
 
 - `get_GTEx.R` - download and normalize gene expression data. Saves RDS in `gtex_normalized.rds` file.
 
+# Misc
 
+Code behind GTEx visualization - https://github.com/broadinstitute/gtex-viz
 
